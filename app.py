@@ -1,22 +1,43 @@
 import os
+import requests
 import random
 import string
+import google.generativeai as genai
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask import request, jsonify
+from datetime import datetime, date
+from flask import jsonify, request, session
+from flask import jsonify, request
+from flask_login import login_required, current_user
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+from io import BytesIO
+from flask import send_file
+from datetime import datetime, timedelta
+
+
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
+active_members = {}  # { board_id: { user_id: {"username": ..., "last_active": datetime} } }
 app.secret_key = os.environ.get('FLASK_SECRET', 'change_this_secret')
 
+GEMINI_API_KEY = "AIzaSyB-h2vHMybgGsLo9ewsBqf8WH5L9fDszLo"
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+model = genai.GenerativeModel("gemini-2.0-flash")
 # DB config — change if needed
 DB_HOST = os.environ.get('DB_HOST', 'localhost')
 DB_NAME = os.environ.get('DB_NAME', 'nexusboard')
 DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASS = os.environ.get('DB_PASS', 'Abhi2002')
+DB_PASS = os.environ.get('DB_PASS', 'Bapun12')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 
 def get_db_conn():
@@ -128,6 +149,257 @@ def dashboard():
         cur.close(); conn.close()
     return render_template('dashboard.html', user=session['user'], owned_boards=owned, joined_boards=joined)
 
+
+
+@app.route('/get_daily_quote')
+def get_daily_quote():
+    today = date.today()
+    conn = get_db_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT quote, author FROM daily_quotes WHERE date = %s", (today,))
+    row = cur.fetchone()
+
+    if row:
+        quote, author = row
+    else:
+        API_KEY = "mK2EIaIL5JtFIdnqz6RwwA==c2RbFiMT5P4fX2lS"
+        headers = {'X-Api-Key': API_KEY}
+
+        try:
+            # ✅ Try with inspirational first
+            resp = requests.get('https://api.api-ninjas.com/v1/quotes?category=inspirational', headers=headers, timeout=5)
+            data = resp.json() if resp.status_code == 200 else []
+            if data:
+                q = data[0]
+                quote = q.get('quote', '').strip() or "Keep pushing your limits."
+                author = q.get('author', '').strip() or "NexusBoard"
+            else:
+                # ✅ Try without category as fallback
+                resp2 = requests.get('https://api.api-ninjas.com/v1/quotes', headers=headers, timeout=5)
+                data2 = resp2.json() if resp2.status_code == 200 else []
+                if data2:
+                    q = data2[0]
+                    quote = q.get('quote', '').strip() or "Keep pushing forward!"
+                    author = q.get('author', '').strip() or "NexusBoard"
+                else:
+                    quote = "Collaboration turns goals into achievements!"
+                    author = "NexusBoard"
+        except Exception as e:
+            print("Quote API error:", e)
+            quote = "Collaboration turns goals into achievements!"
+            author = "NexusBoard"
+
+        # ✅ Save today's quote safely
+        cur.execute("""
+            INSERT INTO daily_quotes (date, quote, author)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (date) DO UPDATE SET quote = EXCLUDED.quote, author = EXCLUDED.author
+        """, (today, quote, author))
+        conn.commit()
+
+    cur.close()
+    conn.close()
+    return jsonify({'quote': quote, 'author': author})
+
+
+@app.route("/get_avatar", methods=["GET"])
+def get_avatar():
+    if "user" not in session:
+        return jsonify({"error": "not_logged_in"}), 403
+
+    user_id = session["user"]["id"]
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT avatar_url FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        avatar_url = row[0] if row else None
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"avatar_url": avatar_url})
+
+
+@app.route("/save_avatar", methods=["POST"])
+def save_avatar():
+    if "user" not in session:
+        return jsonify({"error": "not_logged_in"}), 403
+
+    data = request.get_json()
+    avatar_url = data.get("avatar_url")
+    if not avatar_url:
+        return jsonify({"status": "error", "message": "No avatar URL provided"}), 400
+
+    user_id = session["user"]["id"]
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE users SET avatar_url = %s WHERE id = %s", (avatar_url, user_id))
+        conn.commit()
+        return jsonify({"status": "success"})
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route("/export_tasks_pdf/<int:board_id>")
+def export_tasks_pdf(board_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        # Get board name
+        cur.execute("SELECT name FROM boards WHERE id = %s", (board_id,))
+        board = cur.fetchone()
+        if not board:
+            flash("Board not found", "error")
+            return redirect(url_for("dashboard"))
+        board_name = board[0]
+
+        # ✅ Join with users table to get assigned username
+        cur.execute("""
+            SELECT 
+                t.name, t.description, u.username AS assigned_name, 
+                t.comments, t.progress_percent, t.created_at, t.due_date
+            FROM tasks t
+            LEFT JOIN users u ON t.assigned_to = u.id
+            WHERE t.board_id = %s
+            ORDER BY t.created_at ASC
+        """, (board_id,))
+        tasks = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+    # Create PDF
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    pdf.setTitle(f"{board_name} - Task Report")
+
+    # Header
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(1 * inch, height - 1 * inch, f"📋 Task Report – {board_name}")
+
+    pdf.setFont("Helvetica", 12)
+    pdf.drawString(1 * inch, height - 1.3 * inch, f"Exported by: {session['user']['username']}")
+    pdf.drawString(1 * inch, height - 1.5 * inch, f"Total Tasks: {len(tasks)}")
+
+    y = height - 2 * inch
+
+    for t in tasks:
+        name = t[0] or "Untitled Task"
+        desc = t[1] or "No description"
+        assigned_name = t[2] or "Unassigned"
+        comments = t[3] or "None"
+        progress = str(t[4] or 0)
+        created_at = t[5].strftime("%Y-%m-%d %H:%M") if t[5] else "N/A"
+        due_date = t[6].strftime("%Y-%m-%d %H:%M") if t[6] else "N/A"
+
+        pdf.setFont("Helvetica-Bold", 13)
+        pdf.drawString(1 * inch, y, f"Task: {name}")
+        y -= 15
+        pdf.setFont("Helvetica", 11)
+        pdf.drawString(1.2 * inch, y, f"Assigned: {assigned_name}")
+        y -= 13
+        pdf.drawString(1.2 * inch, y, f"Progress: {progress}%")
+        y -= 13
+        pdf.drawString(1.2 * inch, y, f"Comments: {comments}")
+        y -= 13
+        pdf.drawString(1.2 * inch, y, f"Created: {created_at} | Due: {due_date}")
+        y -= 20
+
+        # New page if needed
+        if y < 100:
+            pdf.showPage()
+            y = height - 1 * inch
+
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"{board_name}_tasks.pdf",
+        mimetype="application/pdf"
+    )
+
+
+
+# Update (increment) user time
+@app.route("/update_time_spent", methods=["POST"])
+def update_time_spent():
+    if "user" not in session:
+        return jsonify({"error": "not_logged_in"}), 403
+
+    data = request.get_json()
+    seconds = data.get("seconds", 0)
+    user_id = session["user"]["id"]
+    today = date.today()
+
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO time_spent (user_id, date, seconds)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, date)
+            DO UPDATE SET seconds = time_spent.seconds + EXCLUDED.seconds
+        """, (user_id, today, seconds))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"status": "ok"})
+
+# Get today’s total
+@app.route("/get_today_time")
+def get_today_time():
+    if "user" not in session:
+        return jsonify({"seconds": 0})
+
+    user_id = session["user"]["id"]
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT seconds FROM time_spent WHERE user_id=%s AND date=%s",
+                    (user_id, date.today()))
+        row = cur.fetchone()
+        total_seconds = row[0] if row else 0
+    finally:
+        cur.close()
+        conn.close()
+
+    return jsonify({"seconds": total_seconds})
+
+# Get last 7 days
+@app.route("/get_weekly_time")
+def get_weekly_time():
+    if "user" not in session:
+        return jsonify([])
+
+    user_id = session["user"]["id"]
+    conn = get_db_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT date, seconds FROM time_spent
+            WHERE user_id=%s
+            ORDER BY date DESC
+            LIMIT 7
+        """, (user_id,))
+        data = [{"date": str(r[0]), "seconds": r[1]} for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(data)
+
+
+
 # ---------- CREATE BOARD ----------
 @app.route('/add_board', methods=['POST'])
 def add_board():
@@ -186,6 +458,10 @@ def join_board():
         cur.close(); conn.close()
     return redirect(url_for('dashboard'))
 
+@app.context_processor
+def inject_now():
+    return {'now': datetime.utcnow}
+
 # ---------- OPEN BOARD VIEW ----------
 @app.route('/board/<int:board_id>')
 def board_view(board_id):
@@ -236,10 +512,58 @@ def board_view(board_id):
         cur.execute(query, tuple(params))
         tasks = cur.fetchall()
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
-    return render_template('board.html', board=board, members=members, tasks=tasks,
+# Fetch completed tasks (run outside finally)
+    conn = get_db_conn()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT c.*, u.username AS completed_by
+        FROM completed_tasks c
+       LEFT JOIN users u ON c.assigned_to = u.id
+       WHERE c.board_id = %s
+       ORDER BY c.completed_date DESC
+    """, (board_id,))
+    completed = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template('board.html', board=board, members=members, tasks=tasks, completed=completed,
                            user=session['user'], search=search, filter_user=filter_user)
+
+def get_gemini_response(user_message):
+    chat = model.start_chat(history=[])
+    response = chat.send_message(user_message, stream=False)
+    if response.candidates:
+        generated_text = response.candidates[0].content
+        parts = generated_text.split('text: "')
+        if len(parts) >= 2:
+            refined_text = parts[1].split('"\n')[0]
+            cleaned_string = refined_text.replace('\n', '')
+            return cleaned_string
+    return "Sorry, I don’t have a response for that right now."
+
+@app.route("/api/chatbot", methods=["POST"])
+def chatbot_api():
+    try:
+        data = request.get_json(force=True)
+        message = data.get("message") or data.get("prompt")
+        if not message:
+            return jsonify({"error": "Empty message"}), 400
+
+        # Use the same model initialized globally
+        response = model.generate_content(message)
+
+        # Ensure we return real text if available
+        reply_text = getattr(response, "text", None)
+        if not reply_text:
+            return jsonify({"reply": "Sorry, I couldn’t get a response from Gemini."}), 200
+
+        return jsonify({"reply": reply_text}), 200
+
+    except Exception as e:
+        print("Chatbot error:", str(e))
+        return jsonify({"error": str(e)}), 500
 
 
 # ---------- ADD TASK ----------
@@ -315,6 +639,19 @@ def edit_task(task_id):
             """, (name, description, assigned_to, comments, dt_due, progress_percent, task_id))
             conn.commit()
             log_action(board_id, session['user']['id'], f"Edited task '{name}'")
+            # --- Auto move to completed_tasks if progress == 100 ---
+            if progress_percent == 100:
+                cur.execute("SELECT name, description, assigned_to FROM tasks WHERE id=%s", (task_id,))
+                t = cur.fetchone()
+                if t:
+                    cur.execute("""
+                        INSERT INTO completed_tasks (name, description, board_id, assigned_to, completed_date)
+                        VALUES (%s, %s, %s, %s, NOW())
+                    """, (t['name'], t['description'], board_id, t['assigned_to']))
+                    cur.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
+                    conn.commit()
+                    log_action(board_id, session['user']['id'], f"Completed task '{t['name']}'")
+                    socketio.emit('task_update', {'board_id': board_id}, room=f'board_{board_id}')
             flash('Task updated', 'success')
             socketio.emit('task_update', {'board_id': board_id}, room=f'board_{board_id}')
             return redirect(url_for('board_view', board_id=board_id))
@@ -363,6 +700,38 @@ def delete_task(task_id):
     finally:
         cur.close(); conn.close()
     return redirect(url_for('board_view', board_id=board_id))
+
+# ---------- GROUP CHAT ROUTES ----------
+@app.route('/groupchat/<int:board_id>')
+def group_chat(board_id):
+    if not session.get('user'):
+        return redirect(url_for('login'))
+    return render_template('groupchat.html', board_id=board_id, user=session['user'])
+
+@app.route('/messages/<int:board_id>')
+def get_messages(board_id):
+    if not session.get('user'):
+        return jsonify([])
+    user_id = session['user']['id']
+    conn = get_db_conn()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        # hide messages deleted by this user or deleted for all
+        cur.execute("""
+            SELECT m.id, m.message, m.sent_at, u.username AS sender_name, m.sender_id
+            FROM messages m
+            JOIN users u ON m.sender_id = u.id
+            WHERE m.board_id = %s
+              AND m.deleted_for_all = FALSE
+              AND m.id NOT IN (
+                SELECT message_id FROM message_deletions WHERE user_id = %s
+              )
+            ORDER BY m.sent_at ASC
+        """, (board_id, user_id))
+        messages = cur.fetchall()
+    finally:
+        cur.close(); conn.close()
+    return jsonify(messages)
 
 # ---------- PERFORMANCE ----------
 @app.route('/performance/<int:board_id>')
@@ -572,6 +941,160 @@ def handle_leave_board(data):
 @socketio.on('join_dashboard')
 def join_dashboard():
     join_room('dashboard')
+
+@socketio.on('send_message')
+def handle_send(data):
+    board_id = data.get('board_id')
+    user = session.get('user')
+    if not user or not board_id:
+        return
+    msg = data.get('message', '').strip()
+    if not msg:
+        return
+    conn = get_db_conn(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            INSERT INTO messages (board_id, sender_id, message)
+            VALUES (%s,%s,%s) RETURNING id, sent_at
+        """, (board_id, user['id'], msg))
+        row = cur.fetchone()
+        conn.commit()
+        payload = {
+            'id': row['id'],
+            'message': msg,
+            'sender_id': user['id'],
+            'sender_name': user['username'],
+            'sent_at': row['sent_at'].strftime('%H:%M')
+        }
+        socketio.emit('new_message', payload, room=f'board_{board_id}')
+    finally:
+        cur.close(); conn.close()
+
+
+@socketio.on('delete_message')
+def handle_delete(data):
+    msg_id = data.get('message_id')
+    board_id = data.get('board_id')
+    delete_for_all = data.get('for_all', False)
+    user = session.get('user')
+    if not msg_id or not user:
+        return
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
+        if delete_for_all:
+            cur.execute("UPDATE messages SET deleted_for_all=TRUE WHERE id=%s", (msg_id,))
+            conn.commit()
+            socketio.emit('delete_message_all', {'id': msg_id}, room=f'board_{board_id}')
+        else:
+            cur.execute("INSERT INTO message_deletions (message_id,user_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                        (msg_id, user['id']))
+            conn.commit()
+            emit('delete_message_self', {'id': msg_id})
+    finally:
+        cur.close(); conn.close()
+
+
+@socketio.on('edit_message')
+def handle_edit(data):
+    msg_id = data.get('message_id')
+    new_text = data.get('new_text', '').strip()
+    board_id = data.get('board_id')
+    user = session.get('user')
+    if not msg_id or not user or not new_text:
+        return
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE messages SET message=%s WHERE id=%s AND sender_id=%s",
+                    (new_text, msg_id, user['id']))
+        conn.commit()
+        socketio.emit('edit_message', {'id': msg_id, 'new_text': new_text}, room=f'board_{board_id}')
+    finally:
+        cur.close(); conn.close()
+
+# ------------------- ACTIVE MEMBERS TRACKER (In-Memory) -------------------
+
+active_members = {}  # { board_id: { user_id: {"username": ..., "last_active": datetime} } }
+
+def emit_active_members(board_id):
+    """Broadcast the current active/last-seen list to everyone in the board."""
+    now = datetime.utcnow()
+    board_data = active_members.get(board_id, {})
+    result = []
+
+    for uid, info in board_data.items():
+        last_seen = info["last_active"]
+        delta = now - last_seen
+        is_online = delta < timedelta(seconds=30)
+        time_ago = ""
+        if not is_online:
+            seconds = int(delta.total_seconds())
+            if seconds < 60:
+                time_ago = f"{seconds}s ago"
+            elif seconds < 3600:
+                time_ago = f"{seconds // 60}m ago"
+            else:
+                time_ago = f"{seconds // 3600}h ago"
+
+        result.append({
+            "username": info["username"],
+            "is_online": is_online,
+            "last_active": time_ago
+        })
+
+    emit("active_members_update", {"board_id": board_id, "members": result}, room=f"board_{board_id}")
+
+
+@socketio.on('join_board')
+def handle_join_board(data):
+    board_id = data.get('board_id')
+    user = session.get('user')
+    if not board_id or not user:
+        return
+
+    join_room(f"board_{board_id}")
+
+    if board_id not in active_members:
+        active_members[board_id] = {}
+
+    active_members[board_id][user['id']] = {
+        "username": user['username'],
+        "last_active": datetime.utcnow()
+    }
+
+    emit_active_members(board_id)
+
+
+@socketio.on('leave_board')
+def handle_leave_board(data):
+    board_id = data.get('board_id')
+    user = session.get('user')
+    if not board_id or not user:
+        return
+
+    leave_room(f"board_{board_id}")
+
+    if board_id in active_members and user['id'] in active_members[board_id]:
+        active_members[board_id][user['id']]["last_active"] = datetime.utcnow()
+
+    emit_active_members(board_id)
+
+
+@socketio.on('user_active')
+def handle_user_active(data):
+    board_id = data.get('board_id')
+    user = session.get('user')
+    if not board_id or not user:
+        return
+
+    if board_id not in active_members:
+        active_members[board_id] = {}
+
+    active_members[board_id][user['id']] = {
+        "username": user['username'],
+        "last_active": datetime.utcnow()
+    }
+
+    emit_active_members(board_id)
 
 
 if __name__ == '__main__':

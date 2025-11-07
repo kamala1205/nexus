@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Group Chat | NexusBoard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='board.css') }}">
+<style>
+/* ========== WhatsApp-Style Group Chat ========== */
+.chat-container {
+  max-width: 800px;
+  margin: 30px auto;
+  background: #ece5dd; /* WhatsApp background color */
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  height: 80vh;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Header */
+.chat-header {
+  background: #075E54; /* WhatsApp green */
+  color: white;
+  padding: 15px;
+  border-radius: 12px 12px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Chat area */
+.chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+  background: #efeae2;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Input area */
+.chat-input {
+  display: flex;
+  border-top: 1px solid #cde8e8;
+  padding: 10px;
+  background: #f0f0f0;
+  border-radius: 0 0 12px 12px;
+}
+.chat-input input {
+  flex: 1;
+  border: none;
+  border-radius: 20px;
+  padding: 10px 15px;
+  font-size: 15px;
+  outline: none;
+  background: white;
+}
+.chat-input button {
+  border: none;
+  background: #25D366; /* WhatsApp green */
+  color: white;
+  font-weight: 600;
+  padding: 10px 16px;
+  margin-left: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.chat-input button:hover {
+  background: #20b659;
+}
+
+/* Message bubbles */
+.msg {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  position: relative;
+  max-width: 70%;
+  word-wrap: break-word;
+  line-height: 1.4;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.msg.self {
+  background: #DCF8C6; /* Light green bubble */
+  color: #000;
+  margin-left: auto;
+  text-align: right;
+}
+
+.msg.other {
+  background: white;
+  color: #000;
+  margin-right: auto;
+}
+
+/* Timestamp */
+.msg small {
+  font-size: 11px;
+  opacity: 0.6;
+  display: block;
+  margin-top: 2px;
+  text-align: right;
+}
+
+/* Three-dot menu */
+.msg .three-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  color: #888;
+}
+.msg .three-dot:hover {
+  color: #333;
+}
+
+.msg-menu {
+  position: absolute;
+  right: 10px;
+  top: 25px;
+  background: #ffffff;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  display: none;
+  flex-direction: column;
+  z-index: 100;
+}
+.msg-menu button {
+  border: none;
+  background: none;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 14px;
+}
+.msg-menu button:hover {
+  background: #f0f0f0;
+}
+
+/* Scrollbar */
+.chat-body::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-body::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+/* Fade-in animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
+
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand-area">
+    <a href="{{ url_for('board_view', board_id=board_id) }}" style="text-decoration:none;color:#00796b;font-weight:600;">⬅ Back</a>
+    <div class="brand">Group Chat</div>
+  </div>
+  <div class="actions">
+    <span>👋 {{ user.username }}</span>
+    <a href="{{ url_for('logout') }}">Logout</a>
+  </div>
+</header>
+
+<div class="chat-container">
+  <div class="chat-header">
+    <h3>💬 Board Group Chat</h3>
+  </div>
+  <div id="chatBody" class="chat-body"></div>
+  <div class="chat-input">
+    <input id="chatInput" type="text" placeholder="Type a message..." autocomplete="off">
+    <button id="sendBtn">Send</button>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+const socket = io();
+const boardId = JSON.parse('{{ board_id | tojson | safe }}');
+const userId = JSON.parse('{{ user.id | tojson | safe }}');
+
+const username = "{{ user.username }}";
+const chatBody = document.getElementById('chatBody');
+const input = document.getElementById('chatInput');
+const sendBtn = document.getElementById('sendBtn');
+
+function scrollToBottom() {
+  chatBody.scrollTop = chatBody.scrollHeight;
+}
+
+function renderMessage(m) {
+  const div = document.createElement('div');
+  div.classList.add('msg');
+  div.dataset.id = m.id;
+  if (m.sender_id === userId) div.classList.add('self');
+  else div.classList.add('other');
+
+  div.innerHTML = `
+    <span>${m.message}</span>
+    <small>${m.sender_name} • ${m.sent_at}</small>
+    <span class="three-dot">⋮</span>
+    <div class="msg-menu"></div>
+  `;
+  chatBody.appendChild(div);
+  attachMenu(div, m);
+}
+
+function attachMenu(div, m) {
+  const dot = div.querySelector('.three-dot');
+  const menu = div.querySelector('.msg-menu');
+  if (!dot || !menu) return;
+  menu.innerHTML = '';
+  if (m.sender_id === userId) {
+    menu.innerHTML = `
+      <button onclick="editMessage(${m.id})">✏️ Edit</button>
+      <button onclick="deleteMessage(${m.id}, false)">🗑 Delete for Me</button>
+      <button onclick="deleteMessage(${m.id}, true)">🚫 Delete for Everyone</button>
+    `;
+  } else {
+    menu.innerHTML = `<button onclick="deleteMessage(${m.id}, false)">🗑 Delete for Me</button>`;
+  }
+  dot.onclick = (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('.msg-menu').forEach(mn => mn.style.display='none');
+    menu.style.display = menu.style.display === 'flex' ? 'none' : 'flex';
+  };
+}
+
+document.body.addEventListener('click', () => {
+  document.querySelectorAll('.msg-menu').forEach(mn => mn.style.display='none');
+});
+
+async function loadMessages() {
+  const res = await fetch(`/messages/${boardId}`);
+  const data = await res.json();
+  chatBody.innerHTML = '';
+  data.forEach(renderMessage);
+  scrollToBottom();
+}
+loadMessages();
+
+sendBtn.onclick = () => {
+  const msg = input.value.trim();
+  if (!msg) return;
+  socket.emit('send_message', { board_id: boardId, message: msg });
+  input.value = '';
+};
+
+function deleteMessage(id, forAll=false) {
+  socket.emit('delete_message', { message_id: id, board_id: boardId, for_all: forAll });
+}
+
+function editMessage(id) {
+  const div = document.querySelector(`.msg[data-id='${id}']`);
+  if (!div) return;
+  const old = div.querySelector('span').innerText;
+  const newText = prompt('Edit message:', old);
+  if (newText && newText.trim() && newText !== old)
+    socket.emit('edit_message', { message_id: id, new_text: newText, board_id: boardId });
+}
+
+socket.on('new_message', m => {
+  if (m.board_id && m.board_id != boardId) return;
+  renderMessage(m);
+  scrollToBottom();
+});
+
+socket.on('delete_message_all', d => {
+  const el = document.querySelector(`.msg[data-id='${d.id}']`);
+  if (el) el.remove();
+});
+
+socket.on('delete_message_self', d => {
+  const el = document.querySelector(`.msg[data-id='${d.id}']`);
+  if (el) el.remove();
+});
+
+socket.on('edit_message', d => {
+  const el = document.querySelector(`.msg[data-id='${d.id}'] span`);
+  if (el) el.innerText = d.new_text + " ✏️";
+});
+
+socket.emit('join_board', { board_id: boardId });
+</script>
+</body>
+</html>

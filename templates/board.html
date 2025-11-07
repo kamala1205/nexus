@@ -11,34 +11,103 @@
 <body>
 
   <!-- ==================== HEADER ==================== -->
-  <header class="topbar">
-    <div class="brand-area">
-      <div class="hamburger" onclick="toggleSidebar()">☰</div>
-      <div class="brand">{{ board.name }}</div>
-    </div>
-    <div class="actions">
-      <a href="{{ url_for('dashboard') }}">🏠 Dashboard</a>
-      <span>👋 Hello, <b>{{ user.username }}</b></span>
-      <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
-    </div>
-  </header>
+<header class="topbar">
+  <div class="brand-area">
+    <div class="hamburger" onclick="toggleSidebar()">☰</div>
+    <div class="brand">{{ board.name }}</div>
+  </div>
 
-  <!-- ==================== SIDEBAR ==================== -->
-  <nav id="sidebar" class="sidebar">
-    <ul>
-      <li><a href="#" onclick="showSection('members', this)">👥 Team Members</a></li>
-      <li><a href="#" onclick="showSection('tasks', this)">📋 Tasks</a></li>
-      <li><a href="#" onclick="showSection('create', this)">📝 Create Task</a></li>
-      <li><a href="#" onclick="showSection('performance', this)">📊 Performance</a></li>
-      <li><a href="#" onclick="showSection('status', this)">📈 % Completion</a></li>
-      <li><a href="#" onclick="showSection('history', this)">🕓 History</a></li>
-      <li><a href="{{ url_for('dashboard') }}">🏠 Dashboard</a></li>
-      <li><a href="{{ url_for('logout') }}">🚪 Logout</a></li>
-    </ul>
-  </nav>
+  <div class="actions">
+    <a href="{{ url_for('dashboard') }}">🏠 Dashboard</a>
+
+    <div class="user-info">
+      <img id="topbarAvatar" class="topbar-avatar" src="" alt="User Avatar">
+      <span>👋 Hello, <b>{{ user.username }}</b></span>
+    </div>
+
+    <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+  </div>
+</header>
+
+
+<!-- ==================== SIDEBAR ==================== -->
+<nav id="sidebar" class="sidebar">
+  <ul>
+    <!-- 🌟 MAIN SECTION -->
+    <li>
+      <div class="sidebar-heading collapsible" onclick="toggleSubmenu(this)">Main</div>
+      <ul class="submenu">
+        <li><a href="{{ url_for('dashboard') }}">🏠 Dashboard</a></li>
+        <li><a href="#" onclick="showSection('tasks', this)">📋 Tasks</a></li>
+        <li><a href="#" onclick="showSection('create', this)">📝 Create Task</a></li>
+      </ul>
+    </li>
+
+    <!-- 👥 TEAM & COLLABORATION -->
+    <li>
+      <div class="sidebar-heading collapsible" onclick="toggleSubmenu(this)">Team & Collaboration</div>
+      <ul class="submenu">
+        <li><a href="#" onclick="showSection('members', this)">👥 Team Members</a></li>
+        <li><a href="#" onclick="showSection('groupchat', this)">💭 Group Chat</a></li>
+        <li><a href="#" onclick="showSection('chatbot', this)">💬 Chatbot</a></li>
+      </ul>
+    </li>
+
+    <!-- 📊 ANALYTICS & TRACKING -->
+    <li>
+      <div class="sidebar-heading collapsible" onclick="toggleSubmenu(this)">Analytics</div>
+      <ul class="submenu">
+        <li><a href="#" onclick="showSection('performance', this)">📊 Performance</a></li>
+        <li><a href="#" onclick="showSection('status', this)">📈 % Completion</a></li>
+        <li><a href="#" onclick="showSection('history', this)">🕓 History</a></li>
+      </ul>
+    </li>
+
+    <!-- ⚙️ SETTINGS & LOGOUT -->
+    <li>
+      <div class="sidebar-heading collapsible" onclick="toggleSubmenu(this)">System</div>
+      <ul class="submenu">
+        <li><a href="{{ url_for('logout') }}">🚪 Logout</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+
+
 
   <!-- ==================== MAIN CONTENT ==================== -->
   <main class="content">
+
+        <section id="chatbot" class="section">
+      <div class="chatbot-container">
+        <h2>💬 NexusBoard Chatbot (Gemini AI)</h2>
+        <p class="chatbot-subtitle">Ask anything about your tasks, team, or progress!</p>
+
+        <div class="chatbox">
+          <div id="chatLog" class="chatlog">
+            <div class="bot-msg">Hello {{ user.username }}! 👋 How can I assist you today?</div>
+          </div>
+          <div class="chat-input">
+            <input id="chatInput" type="text" placeholder="Type your message..." autocomplete="off">
+            <button id="chatSend">Send</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+<section id="groupchat" class="section">
+  <div class="chat-container">
+    <div class="chat-header">
+      <h3>💬 Board Group Chat</h3>
+    </div>
+    <div id="groupChatBody" class="chat-body"></div>
+    <div class="chat-input">
+      <input id="groupChatInput" type="text" placeholder="Type a message..." autocomplete="off">
+      <button id="groupSendBtn">Send</button>
+    </div>
+  </div>
+</section>
+
 
     <!-- ===== TEAM MEMBERS SECTION ===== -->
     <section id="members" class="section active">
@@ -46,7 +115,10 @@
       <div class="board-header">
         <h1>{{ board.name }}</h1>
         <p class="owner">Team Head: <b>{{ board.owner_name }}</b></p>
-        <p class="quote">"Collaboration turns goals into achievements!"</p>
+        <div class="quote-of-the-day">
+          <blockquote id="dailyQuote">Loading quote...</blockquote>
+          <p id="quoteAuthor"></p>
+         </div>
       </div>
 
       <h2>👥 Team Members</h2>
@@ -92,6 +164,15 @@
       </div>
       {% endif %}
 
+      {% if user.id == board.owner_id %}
+<div class="active-members">
+  <h3>🟢 Active Members (Live)</h3>
+  <ul id="activeList" class="active-list">
+    <li>Loading active members...</li>
+  </ul>
+</div>
+{% endif %}
+
     </section>
 
 
@@ -108,12 +189,29 @@
             <option value="{{ m.username }}">{{ m.username }}</option>
           {% endfor %}
         </select>
+        <button id="exportBtn" class="export-btn">📄 Export to PDF</button>
       </div>
 
       {% if tasks %}
         <div id="task-grid" class="task-grid">
           {% for t in tasks %}
-            <div class="task-card" data-task-id="{{ t.id }}" data-member="{{ t.assigned_name or '' }}">
+            {% set color_class = '' %}
+            {% if t.progress_percent == 100 %}
+              {% set color_class = 'task-complete' %}
+            {% elif t.important %}
+              {% set color_class = 'task-important' %}
+            {% elif t.due_date %}
+              {% set days_left = (t.due_date - now()).days %}
+              {% if days_left <= 0 %}
+                {% set color_class = 'task-overdue' %}
+              {% elif days_left <= 3 %}
+                {% set color_class = 'task-soon' %}
+              {% else %}
+                {% set color_class = 'task-normal' %}
+              {% endif %}
+            {% endif %}
+            <div class="task-card {{ color_class }}" data-task-id="{{ t.id }}" data-member="{{ t.assigned_name or '' }}">
+
               <h4>{{ t.name }}</h4>
               <p>{{ t.description or 'No description provided.' }}</p>
               <p><strong>Assigned:</strong> {{ t.assigned_name or 'Unassigned' }}</p>
@@ -135,6 +233,21 @@
       {% else %}
         <p class="empty">No tasks yet.</p>
       {% endif %}
+
+      <hr style="margin:30px 0;">
+<h3>✅ Completed Tasks</h3>
+{% if completed %}
+  <div class="completed-tasks">
+    {% for c in completed %}
+      <div class="completed-item">
+        <strong>{{ c.name }}</strong> — Completed by {{ c.completed_by or 'Unknown' }}
+        <small>on {{ c.completed_date.strftime('%Y-%m-%d %H:%M') }}</small>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p>No completed tasks yet.</p>
+{% endif %}
 
     </section>
 
@@ -490,12 +603,77 @@
   }
 </script>
 
+<script>
+document.getElementById("exportBtn").addEventListener("click", function() {
+  window.location.href = "{{ url_for('export_tasks_pdf', board_id=board.id) }}";
+});
+</script>
+
+<script>
+async function loadTopbarAvatar() {
+  try {
+    const res = await fetch("/get_avatar");
+    if (res.ok) {
+      const data = await res.json();
+      const avatarUrl = data.avatar_url || 
+        `https://avataaars.io/?avatarStyle=Circle&topType=ShortHairShortFlat&hairColor=Brown&skinColor=Light`;
+      document.getElementById("topbarAvatar").src = avatarUrl;
+    }
+  } catch (err) {
+    console.error("Avatar fetch failed:", err);
+  }
+}
+
+window.addEventListener("load", loadTopbarAvatar);
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const sendBtn = document.getElementById("chatSend");
+  const input = document.getElementById("chatInput");
+  const log = document.getElementById("chatLog");
+
+  async function sendMessage() {
+    const msg = input.value.trim();
+    if (!msg) return;
+    const userMsg = document.createElement("div");
+    userMsg.className = "user-msg";
+    userMsg.textContent = msg;
+    log.appendChild(userMsg);
+    input.value = "";
+
+    const botMsg = document.createElement("div");
+    botMsg.className = "bot-msg";
+    botMsg.textContent = "Thinking...";
+    log.appendChild(botMsg);
+    log.scrollTop = log.scrollHeight;
+
+    try {
+      const res = await fetch("/api/chatbot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg })
+      });
+      const data = await res.json();
+      botMsg.textContent = data.reply || "I'm not sure about that.";
+    } catch (err) {
+      botMsg.textContent = "⚠️ Error: unable to reach chatbot server.";
+      console.error(err);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  sendBtn.addEventListener("click", sendMessage);
+  input.addEventListener("keypress", e => { if (e.key === "Enter") sendMessage(); });
+});
+</script>
+
 <!-- Socket.IO script -->
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
   (function(){
     try {
-      const socket = io(); // default path
+      window.socket = io(); // default path
       // join board-specific room
       if (socket && typeof socket.emit === 'function') {
         socket.emit('join_board', { board_id: boardId });
@@ -552,6 +730,186 @@
     }
   })();
 </script>
+
+<script>
+function toggleSubmenu(element) {
+  element.classList.toggle('active');
+  const submenu = element.nextElementSibling;
+  submenu.classList.toggle('open');
+}
+</script>
+
+<script>
+  async function loadQuote() {
+    try {
+      const res = await fetch('/get_daily_quote');
+      if (res.ok) {
+        const data = await res.json();
+        document.getElementById('dailyQuote').textContent = `"${data.quote}"`;
+        document.getElementById('quoteAuthor').textContent = `— ${data.author}`;
+      } else {
+        console.error('Quote API fetch error');
+      }
+    } catch(e) {
+      console.error('Quote fetch exception:', e);
+    }
+  }
+  window.addEventListener('load', loadQuote);
+</script>
+
+<script>
+  // ========== GROUP CHAT SOCKET LOGIC (fixed IDs) ==========
+  (() => {
+    const socket = io();
+    const userId = JSON.parse('{{ user.id | tojson | safe }}');
+    const username = "{{ user.username }}";
+    const boardId = JSON.parse('{{ board.id | tojson | safe }}');
+
+    const chatBody = document.getElementById('groupChatBody');
+    const input = document.getElementById('groupChatInput');
+    const sendBtn = document.getElementById('groupSendBtn');
+
+    function scrollToBottom() {
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function renderMessage(m) {
+      const div = document.createElement('div');
+      div.classList.add('msg');
+      div.dataset.id = m.id;
+      if (m.sender_id === userId) div.classList.add('self');
+      else div.classList.add('other');
+
+      div.innerHTML = `
+        <span>${m.message}</span>
+        <small>${m.sender_name} • ${m.sent_at}</small>
+        <span class="three-dot">⋮</span>
+        <div class="msg-menu"></div>
+      `;
+      chatBody.appendChild(div);
+      attachMenu(div, m);
+      scrollToBottom();
+    }
+
+    function attachMenu(div, m) {
+      const dot = div.querySelector('.three-dot');
+      const menu = div.querySelector('.msg-menu');
+      if (!dot || !menu) return;
+      menu.innerHTML = '';
+      if (m.sender_id === userId) {
+        menu.innerHTML = `
+          <button onclick="editMessage(${m.id})">✏️ Edit</button>
+          <button onclick="deleteMessage(${m.id}, false)">🗑 Delete for Me</button>
+          <button onclick="deleteMessage(${m.id}, true)">🚫 Delete for Everyone</button>
+        `;
+      } else {
+        menu.innerHTML = `<button onclick="deleteMessage(${m.id}, false)">🗑 Delete for Me</button>`;
+      }
+      dot.onclick = (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.msg-menu').forEach(mn => mn.style.display='none');
+        menu.style.display = menu.style.display === 'flex' ? 'none' : 'flex';
+      };
+    }
+
+    document.body.addEventListener('click', () => {
+      document.querySelectorAll('.msg-menu').forEach(mn => mn.style.display='none');
+    });
+
+    async function loadMessages() {
+      const res = await fetch(`/messages/${boardId}`);
+      const data = await res.json();
+      chatBody.innerHTML = '';
+      data.forEach(renderMessage);
+      scrollToBottom();
+    }
+
+    loadMessages();
+
+    sendBtn.onclick = () => {
+      const msg = input.value.trim();
+      if (!msg) return;
+      socket.emit('send_message', { board_id: boardId, message: msg });
+      input.value = '';
+    };
+
+    window.editMessage = (id) => {
+      const div = document.querySelector(`.msg[data-id='${id}']`);
+      if (!div) return;
+      const old = div.querySelector('span').innerText;
+      const newText = prompt('Edit message:', old);
+      if (newText && newText.trim() && newText !== old)
+        socket.emit('edit_message', { message_id: id, new_text: newText, board_id: boardId });
+    };
+
+    window.deleteMessage = (id, forAll=false) => {
+      socket.emit('delete_message', { message_id: id, board_id: boardId, for_all: forAll });
+    };
+
+    socket.on('new_message', m => {
+      if (m.board_id && m.board_id != boardId) return;
+      renderMessage(m);
+    });
+
+    socket.on('delete_message_all', d => {
+      const el = document.querySelector(`.msg[data-id='${d.id}']`);
+      if (el) el.remove();
+    });
+
+    socket.on('delete_message_self', d => {
+      const el = document.querySelector(`.msg[data-id='${d.id}']`);
+      if (el) el.remove();
+    });
+
+    socket.on('edit_message', d => {
+      const el = document.querySelector(`.msg[data-id='${d.id}'] span`);
+      if (el) el.innerText = d.new_text + " ✏️";
+    });
+
+    socket.emit('join_board', { board_id: boardId });
+  })();
+
+// ========== ACTIVE MEMBERS TRACKER (FIXED VERSION) ==========
+(() => {
+  // Use already-declared socket and boardId safely
+  const isOwner = JSON.parse('{{ (user.id == board.owner_id) | tojson }}');
+  const bId = JSON.parse('{{ board.id | tojson }}');  // renamed to avoid redeclaration
+
+  if (!window.socket || !isOwner) return;
+
+  const activeList = document.getElementById('activeList');
+  if (!activeList) return;
+
+  window.socket.emit('get_active_members', { board_id: bId });
+
+  window.socket.on('active_members_update', data => {
+    if (!data || data.board_id !== bId) return;
+    activeList.innerHTML = '';
+    if (!data.members?.length) {
+      activeList.innerHTML = '<li>No active members currently.</li>';
+      return;
+    }
+    data.members.forEach(m => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span class="${m.is_online ? 'dot-online' : 'dot-offline'}"></span>
+        <b>${m.username}</b>
+        ${m.is_online
+          ? '<span class="status-text">Online</span>'
+          : `<span class="status-text">Last seen ${m.last_active}</span>`}`;
+      activeList.appendChild(li);
+    });
+  });
+
+  // Emit heartbeat every 30 seconds
+  setInterval(() => {
+    try { window.socket.emit('user_active', { board_id: bId }); } catch (_) {}
+  }, 30000);
+})();
+
+
+</script>
+
 
 </body>
 </html>
