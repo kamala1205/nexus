@@ -28,7 +28,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 active_members = {}  # { board_id: { user_id: {"username": ..., "last_active": datetime} } }
 app.secret_key = os.environ.get('FLASK_SECRET', 'change_this_secret')
 
-GEMINI_API_KEY = "AIzaSyB-h2vHMybgGsLo9ewsBqf8WH5L9fDszLo"
+GEMINI_API_KEY = ""
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -37,7 +37,7 @@ model = genai.GenerativeModel("gemini-2.0-flash")
 DB_HOST = os.environ.get('DB_HOST', 'localhost')
 DB_NAME = os.environ.get('DB_NAME', 'nexusboard')
 DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASS = os.environ.get('DB_PASS', 'Bapun12')
+DB_PASS = os.environ.get('DB_PASS', '')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 
 def get_db_conn():
@@ -163,7 +163,7 @@ def get_daily_quote():
     if row:
         quote, author = row
     else:
-        API_KEY = "mK2EIaIL5JtFIdnqz6RwwA==c2RbFiMT5P4fX2lS"
+        API_KEY = ""
         headers = {'X-Api-Key': API_KEY}
 
         try:
